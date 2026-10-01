@@ -1,0 +1,18 @@
+__pycache__/
+*.sif
+*.pt
+*.tmp
+/sio2-tetra/
+# generation/training/CGMD results copied back from the HPC side (not source, don't commit).
+# Unanchored on purpose: these get copied into ad hoc, differently-named result directories
+# that can't all be listed by name in advance.
+*.extxyz
+*.data
+*.csv
+generation.json
+generation_restart.pt
+positions.npy
+training.json
+progress.json
+run_metrics.json
+cg_score_forcefield.json
