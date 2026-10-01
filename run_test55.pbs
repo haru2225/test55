@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# test55: test50's model/sampler (unchanged) on a NEW SiO4-tetrahedron-centroid CG mapping (one
-# bead per Si + its 4 nearest O, PBC-aware mass-weighted centroid), PLUS CGMD (export/md, ported
-# from test37.py -- runs actual Langevin dynamics using the trained score as an approximate force
+# test55: test50's model/sampler (unchanged) on the Si-only CG mapping (same as test50/52), with
+# irreps raised to l<=6 and cutoff/replicate scaled back down to compensate (native box,
+# cutoff=5.0 -- see test55.py's own module docstring), PLUS CGMD (export/md, ported from
+# test37.py -- runs actual Langevin dynamics using the trained score as an approximate force
 # field, fixed at one sigma_ref, instead of only one-shot reverse-diffusion generate). Single
 # script, five argparse subcommands (STAGE):
-#   qsub -P PROJECT_ID -v STAGE=prepare,OUTPUT=sio2-tetra/dataset-pilot      run_test55.pbs
-#   qsub -P PROJECT_ID -v STAGE=train,DATASET=sio2-tetra/dataset-pilot,OUTPUT=sio2-tetra/checkpoint1 run_test55.pbs
-#   qsub -P PROJECT_ID -v STAGE=generate,CHECKPOINT=sio2-tetra/checkpoint1/checkpoint.pt,OUTPUT=sio2-tetra/checkpoint1/generated run_test55.pbs
-#   qsub -P PROJECT_ID -v STAGE=export,CHECKPOINT=sio2-tetra/checkpoint1/checkpoint.pt,OUTPUT=sio2-tetra/forcefield1,SIGMA_REF=0.3 run_test55.pbs
-#   qsub -P PROJECT_ID -v STAGE=md,CHECKPOINT=sio2-tetra/checkpoint1/checkpoint.pt,OUTPUT=sio2-tetra/md1,SIGMA_REF=0.3,STEPS=100000 run_test55.pbs
+#   qsub -P PROJECT_ID -v STAGE=prepare,OUTPUT=sio2-si-only/dataset-pilot      run_test55.pbs
+#   qsub -P PROJECT_ID -v STAGE=train,DATASET=sio2-si-only/dataset-pilot,OUTPUT=sio2-si-only/checkpoint1 run_test55.pbs
+#   qsub -P PROJECT_ID -v STAGE=generate,CHECKPOINT=sio2-si-only/checkpoint1/checkpoint.pt,OUTPUT=sio2-si-only/checkpoint1/generated run_test55.pbs
+#   qsub -P PROJECT_ID -v STAGE=export,CHECKPOINT=sio2-si-only/checkpoint1/checkpoint.pt,OUTPUT=sio2-si-only/forcefield1,SIGMA_REF=0.3 run_test55.pbs
+#   qsub -P PROJECT_ID -v STAGE=md,CHECKPOINT=sio2-si-only/checkpoint1/checkpoint.pt,OUTPUT=sio2-si-only/md1,SIGMA_REF=0.3,STEPS=100000 run_test55.pbs
 # Unlike test45-49, DM2/graphite is not needed -- test55.py is fully self-contained (see its own
 # module docstring), so no DM2_ROOT bind-mount is set up here.
 #PBS -q sg8

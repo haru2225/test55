@@ -1,61 +1,55 @@
 #!/usr/bin/env python3
-"""test55: test50's model/sampler, EXACTLY unchanged, on a NEW weighted coarse-graining (one bead
-per SiO4 tetrahedron, not "keep Si and drop O" like test50/52/53/54) -- PLUS CGMD: `export`/`md`
-subcommands (new, ported from test37.py) that drive actual Langevin dynamics with the trained
-score as an approximate force field, instead of only one-shot reverse-diffusion `generate`.
+"""test55: test50's Si-only coarse-graining (one CG site per original Si atom, every O dropped --
+same mapping as test50/52, NOT the SiO4-tetrahedron-centroid mapping an earlier version of this
+file used) PLUS CGMD: `export`/`md` subcommands (new, ported from test37.py) that drive actual
+Langevin dynamics with the trained score as an approximate force field, instead of only one-shot
+reverse-diffusion `generate`.
 
-COARSE-GRAINING -- the weighted-average kind test37.py's general `prepare` does, applied here with
-a specific, hand-built mapping instead of a user-supplied `mapping.json`: each of the 64 Si atoms
-anchors one CG bead, positioned at the mass-weighted centroid of that Si plus its 4 nearest O atoms
-(the real SiO4 tetrahedron, PBC-aware minimum-image distances; verified against the reference data
-that every Si has a clean nearest-4 shell at 1.53-1.73 A, well separated from the 5th-nearest O).
-THE GEOMETRIC SUBTLETY test39.py's own docstring already flagged ("does not combine overlapping
-SiO4 and AlO6 groups or silently redistribute their shared oxygen masses"): in a corner-sharing
-SiO2 network every O bridges exactly TWO Si tetrahedra (verified: all 128 O atoms are each a
-nearest-4 neighbor of exactly 2 different Si, in the bundled reference data) -- so the 64 tetrahedra
-are NOT disjoint atom groups the way test37.py's general weighted `prepare` requires. test55 does
-NOT solve this by splitting each bridging O's weight 50/50; it uses the simpler, more common
-convention of letting each O contribute its FULL mass/position to the centroid of EVERY tetrahedron
-it belongs to (so bridging O's are double-counted across different beads -- this is a per-bead
-*local-environment* centroid, not a mass-conserving partition of the system). The Si-O4 topology
-(which 4 O indices belong to which Si) is fixed once from the reference data's first frame and
-reused for every frame and for generation/MD, matching every other file in this project's
-"fixed-topology solid crystal" assumption.
+REBUILT (this version) on request to: (1) go back to the plain Si-only mapping instead of the
+tetrahedron-centroid one, (2) raise the spherical-harmonics l_max to 6 (one order past test47/48's
+own l<=5, the highest tried anywhere in this project so far), while (3) keeping the computational
+scale down to compensate -- `--replicate` defaults to 1 (native 13.573 A box, 64 Si, no tiling) and
+`--cutoff`/`--large-cutoff` default to 5.0/5.0 (test47/48/49's own original value for this box,
+*not* test50's later 6.5/6.7 or 8.0/8.2 -- zero rattle margin between cutoff and large-cutoff,
+the same accepted limitation test47/48's own README already documents). The combination (l<=6,
+native box, cutoff=5) is deliberately conservative on atom count and cutoff specifically because
+l<=6 itself is already heavier per edge than anything tried before (l<=5 was already what caused
+test49's CUDA OOM -- see that file's README) -- small box/cutoff is the trade-off made to afford it.
 
-Model/sampler/CLI structure for `prepare`/`train`/`generate`: unchanged from test50.py (which
-copied them byte-for-byte from test38.py) -- single CG species ("SiO4", atomic_number=14 reused
-for ASE export purposes, mass_amu=92.0831=28.0855+4*15.9994), 64 sites, same shape as test50's
-Si-only dataset, so none of `NequIP_TimeEmbed`/`graph`/`load_dataset`/etc. needed any changes.
+Coarse-graining: index-preserving subset selection (keep the 64 Si, drop all 128 O; no averaging,
+no weighting) -- identical in kind to test50/52's own `prepare()`, not test37.py's general weighted
+mapping. See test50.py's own module docstring for why this throws away the Si-O bonding
+information, and test53/54 (which bring O back instead) for the other side of that experiment.
 
-CGMD (`export`, `md` -- new, ported from test37.py's own `export`/`md`, which test50-54 never
-had): `export` bundles the checkpoint plus a `cg_start.data` LAMMPS file into a
-`cg_score_forcefield.pt`/`.json` pair, same format test37.py uses. `md` runs ASE Langevin dynamics
-with a `ScoreCalculator` whose force is `F = -kB*T*model(data, t)/sigma_ref**2` (test37's own
-formula) -- EXPERIMENTAL AND UNVALIDATED, exactly as test37's own CAVEAT already says: the model
-was trained to denoise, not to predict a real conservative force, so this is a heuristic that
-happens to point roughly the right direction near sigma_ref, not a derived or energy-conserving
-force field. The one real difference from test37's `md`: test37's model is sigma-AGNOSTIC
-(`model(data)`, no time input), so its `md` calls the model unconditionally; test55's
-`NequIP_TimeEmbed` requires `t`, so `md`/`export` fix `t = sigma_ref/sigma_max_train` (the
-checkpoint's own trained sigma_max) for the ENTIRE run -- the force field this produces is only
-meant to approximate dynamics AT that one noise/temperature scale, not to anneal across sigma the
-way `generate` does. `analyze` (test37's third CGMD subcommand, RDF comparison) is NOT ported here.
+CGMD (`export`, `md` -- unchanged from this file's previous version, ported from test37.py's own
+`export`/`md`, which test50-54 never had): `export` bundles the checkpoint plus a `cg_start.data`
+LAMMPS file into a `cg_score_forcefield.pt`/`.json` pair, same format test37.py uses. `md` runs ASE
+Langevin dynamics with a `ScoreCalculator` whose force is `F = -kB*T*model(data, t)/sigma_ref**2`
+(test37's own formula) -- EXPERIMENTAL AND UNVALIDATED, exactly as test37's own CAVEAT already
+says: the model was trained to denoise, not to predict a real conservative force, so this is a
+heuristic that happens to point roughly the right direction near sigma_ref, not a derived or
+energy-conserving force field. Because `NequIP_TimeEmbed` requires a `t` input (unlike test37's
+sigma-agnostic model), `md`/`export` fix `t = sigma_ref/sigma_max_train` (the checkpoint's own
+trained sigma_max) for the ENTIRE run -- no annealing, only one noise/temperature scale per run.
+`analyze` (test37's third CGMD subcommand, RDF comparison) is NOT ported here.
 
-Everything else -- cutoff/large-cutoff/sigma-max/updates defaults, `--irreps-hidden`/
-`--irreps-edge`, `--replicate`, the half-box safety guard, `--init crystal`/`crystal-noised`, the
-deterministic-steps warning, `trajectory.extxyz` export -- is unchanged from test50.py.
+Everything else -- `--sigma-max`/`--updates` defaults, the half-box safety guard, `--init crystal`/
+`crystal-noised`, the deterministic-steps warning, `trajectory.extxyz` export -- is unchanged from
+test50.py.
 
-    python test55.py prepare --output sio2-tetra/dataset-pilot   # uses bundled simu_data/
-    python test55.py train --dataset sio2-tetra/dataset-pilot --output sio2-tetra/checkpoint1 --device cuda
-    python test55.py generate --checkpoint sio2-tetra/checkpoint1/checkpoint.pt \
-        --output sio2-tetra/checkpoint1/generated --init crystal-noised --device cuda
-    python test55.py export --checkpoint sio2-tetra/checkpoint1/checkpoint.pt --output sio2-tetra/forcefield1
-    python test55.py md --checkpoint sio2-tetra/checkpoint1/checkpoint.pt --output sio2-tetra/md1 \
+    python test55.py prepare --output sio2-si-only/dataset-pilot   # uses bundled simu_data/
+    python test55.py train --dataset sio2-si-only/dataset-pilot --output sio2-si-only/checkpoint1 --device cuda
+    python test55.py generate --checkpoint sio2-si-only/checkpoint1/checkpoint.pt \
+        --output sio2-si-only/checkpoint1/generated --init crystal-noised --device cuda
+    python test55.py export --checkpoint sio2-si-only/checkpoint1/checkpoint.pt --output sio2-si-only/forcefield1 \
+        --sigma-ref 0.3
+    python test55.py md --checkpoint sio2-si-only/checkpoint1/checkpoint.pt --output sio2-si-only/md1 \
         --sigma-ref 0.3 --steps 10000 --device cuda
 
 Everything test38.py's own CAVEAT says still applies: no scalar energy, no equilibrium claim, no
-physical clock, one model per condition. The CGMD force field additionally carries test37's own
-"experimental_unvalidated" / "provides_energy=False" / "provides_virial=False" status.
+physical clock, one model per condition. No O positions are modeled at all, so this is not a full
+SiO2 structure generator -- only the Si sublattice. The CGMD force field additionally carries
+test37's own "experimental_unvalidated" / "provides_energy=False" / "provides_virial=False" status.
 """
 from __future__ import annotations
 
@@ -83,21 +77,21 @@ from torch_geometric.utils import scatter
 
 # ===== 基本設定・定数 =====
 ROOT = Path(__file__).resolve().parent
-FORMAT = "test55-sio2-tetra-cg-time-denoiser-v1"  # このtest55用チェックポイントの識別子(test50のものとは別)
-DATASET_FORMAT = "test55-sio2-tetra-cg-v1"  # prepare()が書き出すデータセット形式の識別子
+FORMAT = "test55-sio2-si-cg-time-denoiser-v1"  # このtest55用チェックポイントの識別子(test50のものとは別)
+DATASET_FORMAT = "test55-sio2-si-only-cg-v1"  # prepare()が書き出すデータセット形式の識別子
 DATASET_FORMATS = {DATASET_FORMAT}  # 読み込めるデータセット形式(load_dataset()はtest38と同じ関数、中身の集合だけ差し替え)
 CAVEAT = (
     "test55 sigma-conditioned displacement denoiser with a reverse variance-exploding "
     "SDE sampler -- test50's model and sampler code, unchanged, applied to an SiO2 "
-    "(beta-cristobalite) SiO4-tetrahedron-centroid coarse-graining (one CG bead per Si, at the "
-    "mass-weighted centroid of that Si and its 4 nearest O; bridging O atoms contribute fully to "
-    "both tetrahedra they belong to, not split 50/50, so this is a local-environment centroid, "
-    "not a mass-conserving partition). Not a scalar energy or a temperature-conditioned "
-    "equilibrium score. No energy/virial, no explicit electrostatics, pressure, shear response "
-    "or physical kinetics are provided from `generate`. The `export`/`md` CGMD force field "
-    "additionally is experimental and unvalidated: it reuses the denoising output as a heuristic "
-    "Langevin force, not a derived or energy-conserving one. One model per condition; "
-    "generation/MD frames are not equilibrium MD data."
+    "(beta-cristobalite) Si-only coarse-graining (one CG site per original Si atom; every O "
+    "atom of every SiO4 tetrahedron is dropped, not averaged), with irreps raised to l<=6 and "
+    "cutoff/replicate scaled back down (native box, cutoff=5.0) to compensate. Not a scalar "
+    "energy or a temperature-conditioned equilibrium score. No O positions, no energy/virial, "
+    "no explicit electrostatics, pressure, shear response or physical kinetics are provided "
+    "from `generate`. The `export`/`md` CGMD force field additionally is experimental and "
+    "unvalidated: it reuses the denoising output as a heuristic Langevin force, not a derived "
+    "or energy-conserving one. One model per condition; generation/MD frames are not "
+    "equilibrium MD data."
 )
 STOP = False  # SIGINT/SIGTERMを受け取ったらTrueにして、train/generateループを安全に中断させるフラグ
 
@@ -234,13 +228,13 @@ class InitialEmbedding(nn.Module):
         return data
 
 
-def architecture(num_species, cutoff, irreps_hidden="64x0e + 32x1e + 16x2e + 8x3e + 4x4e",
-                  irreps_edge="4x0e + 4x1e + 2x2e + 2x3e + 1x4e"):
+def architecture(num_species, cutoff, irreps_hidden="64x0e + 32x1e + 16x2e + 8x3e + 4x4e + 2x5e + 1x6e",
+                  irreps_edge="4x0e + 4x1e + 2x2e + 2x3e + 1x4e + 1x5e + 1x6e"):
     # モデルの構造(irreps=e3nnの回転等変な特徴量の型、畳み込み層の数など)を
     # 1つの辞書にまとめたもの。チェックポイントに保存しておき、生成時に
     # 同じ構造のモデルを再構築するために使う。test37と同じ構造。
     # irreps_hidden/irreps_edge引数はtest50独自の追加(test38は引数なしのハードコード、
-    # l<=1隠れ層/l<=2エッジ固定)。ここでのデフォルトはl<=4構成(下のtrainの--irreps-hidden/
+    # l<=1隠れ層/l<=2エッジ固定)。ここでのデフォルトはl<=6構成(下のtrainの--irreps-hidden/
     # --irreps-edgeのデフォルトと合わせてある)。
     return dict(num_species=num_species, cutoff_angstrom=cutoff,
                 irreps_node_x="8x0e", irreps_node_z="8x0e",
@@ -282,8 +276,7 @@ def load_dataset(folder):
 
 def atoms_from_meta(positions, cell, meta):
     # モデル用のtype_id配列を、可視化・エクスポート用にase.Atomsオブジェクト
-    # (実際の原子番号・質量を持つ)へ変換する。test55ではspeciesは「SiO4」1種類のみ
-    # (原子番号は可視化のためSi=14を流用、質量はSiO4四面体の合計質量92.0831amu)。
+    # (実際の原子番号・質量を持つ)へ変換する。test55ではspeciesはSi一種類のみ。
     ids = np.asarray(meta["type_ids"])
     atoms = Atoms(numbers=[meta["species"][i]["atomic_number"] for i in ids],
                   positions=positions, cell=cell, pbc=True,
@@ -650,69 +643,11 @@ def checkpoint_time_model(path, device):
 
 # --- test50-specific code: build the Si-only SiO2 CG dataset test38's load_dataset() expects ---
 
-def si_o4_topology(positions0, cell0, si_indices, o_indices):
-    # test55の要: 最初のフレームから「どのSiにどの4つのOが属するか」というSiO4四面体の
-    # トポロジーを一度だけ決定し、以降全フレーム・生成/MD時も同じ対応を使い続ける
-    # (このプロジェクト共通の「固体結晶はトポロジーが変わらない」前提に合わせる)。
-    # PBC(最小image)を考慮して、各Siに最も近い4個のOを選ぶ。
-    inv = np.linalg.inv(cell0)
-
-    def mic(disp):
-        frac = disp @ inv
-        frac -= np.round(frac)
-        return frac @ cell0
-
-    topology = []  # topology[i] = si_indicesのi番目のSiに対応する、o_indices内のインデックス4つ
-    for si in si_indices:
-        disp = mic(positions0[o_indices] - positions0[si])
-        dist = np.linalg.norm(disp, axis=1)
-        nearest4 = np.argsort(dist)[:4]
-        topology.append(o_indices[nearest4])
-    topology = np.asarray(topology)  # (64, 4)
-
-    # 健全性チェック: 本来のコーナー共有SiO2網目なら、各Oはちょうど2つのSiの最近接4個に
-    # 現れるはず(架橋酸素)。これが崩れている場合は、この単純な「最近接4個」ルールが
-    # この構造には合わないということなので、黙って進めず知らせる。
-    counts = np.zeros(len(positions0), dtype=int)
-    for o4 in topology:
-        counts[o4] += 1
-    bridging_counts = counts[o_indices]
-    if not np.all(bridging_counts == 2):
-        unique, freq = np.unique(bridging_counts, return_counts=True)
-        print(f"NOTE: expected every O to be the nearest-4 neighbor of exactly 2 Si "
-              f"(corner-sharing SiO4 network); got counts {dict(zip(unique.tolist(), freq.tolist()))}. "
-              f"Proceeding anyway -- each bead is still its own Si's nearest-4-O centroid.",
-              flush=True)
-    return topology
-
-
-def tetrahedron_centroids(frames, cell_lengths, si_indices, topology, mass_si, mass_o):
-    # 各フレーム・各Siについて、(Si本体 + topologyで決めた4個のO)の質量中心を計算する。
-    # PBCを跨いだ重心を正しく扱うため、Siを原点にしたminimum-image変位で各Oの寄与を
-    # 足し込む(frames[:, si] + 各Oのmic変位の質量加重平均)。セルは等方(Lx=Ly=Lz)かつ
-    # フレームごとに変わりうる前提(呼び出し側で既に検証済み)。
-    n_frames = frames.shape[0]
-    n_si = len(si_indices)
-    total_mass = mass_si + 4 * mass_o
-    cell_len = cell_lengths[:, 0].astype(np.float64)  # (n_frames,)
-    centroids = np.empty((n_frames, n_si, 3), dtype=np.float32)
-    for i, (si, o4) in enumerate(zip(si_indices, topology)):
-        si_pos = frames[:, si, :].astype(np.float64)  # (n_frames, 3)
-        disp_sum = np.zeros((n_frames, 3), dtype=np.float64)
-        for o in o4:
-            disp = frames[:, o, :].astype(np.float64) - si_pos  # (n_frames, 3)
-            disp -= cell_len[:, None] * np.round(disp / cell_len[:, None])  # minimum image
-            disp_sum += mass_o * disp
-        centroids[:, i, :] = (si_pos + disp_sum / total_mass).astype(np.float32)
-    return centroids
-
-
 def prepare(args):
-    # test55の要: Si原子をそのまま残すのではなく、各Siとその最近接4個のOからなる
-    # 「SiO4四面体」の質量中心を1つのCGビーズにする(test37.pyの一般的な重み付きprepare()
-    # と同じ発想だが、架橋酸素(隣接する2つの四面体に共有されるO)は両方の重心計算に
-    # フルで寄与する -- 分割して足し合わせるのではない。詳細はこのファイルの
-    # モジュールdocstring参照。
+    # test55は要望によりSiO4四面体の重心マッピング(旧版)からSi-onlyの部分集合選択
+    # (test50/52と同じ、座標変換や平均化は一切行わない)に戻した。CGMD(export/md)は
+    # そのまま残っている -- 変わったのはCGマッピングと、下のtrain引数のデフォルト
+    # (irreps l<=6, cutoff/large-cutoff=5.0, replicate=1前提)だけ。
     archive = np.load(args.reference_frames)
     for key in ("positions", "cell_lengths", "numbers"):
         if key not in archive.files:
@@ -723,46 +658,43 @@ def prepare(args):
         raise ValueError("Expected positions (frames,atoms,3), cell_lengths (frames,3), "
                           "numbers (atoms,) arrays of agreeing shape")
     si_indices = np.flatnonzero(numbers == 14)
-    o_indices = np.flatnonzero(numbers == 8)
-    if len(si_indices) == 0 or len(o_indices) == 0:
-        raise ValueError("Need both Si (14) and O (8) atoms in --reference-frames")
-    if not np.allclose(cell_lengths, cell_lengths[:, :1]):
-        raise ValueError("test55 assumes a cubic cell (Lx=Ly=Lz) at every frame")
+    if len(si_indices) == 0:
+        raise ValueError("No Si (atomic number 14) atoms found in --reference-frames")
 
-    # トポロジー(どのOがどのSiの四面体に属するか)は最初のフレームだけから決める。
-    cell0 = np.diag(cell_lengths[0])
-    topology = si_o4_topology(positions[0], cell0, si_indices, o_indices)
-
-    mass_si, mass_o = 28.0855, 15.9994
-    centroids_all = tetrahedron_centroids(positions, cell_lengths, si_indices, topology, mass_si, mass_o)
-
-    frames = centroids_all[::args.stride]
+    frames = positions[::args.stride]
     lengths = cell_lengths[::args.stride]
     if len(frames) < 2:
         raise ValueError("Need at least two frames after striding")
+    if not np.allclose(lengths, lengths[:, :1]):
+        raise ValueError("test55 assumes a cubic cell (Lx=Ly=Lz) at every frame")
+
+    # 座標はそのままSiだけ間引く(座標変換や平均化は一切行わない = 部分集合選択)。
+    # セルは元のまま(粗視化で箱が縮むわけではなく、原子の集合が減るだけ)。
+    si_positions = np.ascontiguousarray(frames[:, si_indices, :]).astype(np.float32)
 
     replicate = args.replicate
     if replicate > 1:
-        # 箱をreplicate^3倍にタイル化する(test50/51/52と同じ手法。重心ビーズをそのまま
-        # 複製するだけ)。注意(重要な限界): 複製された像は元の配置を厳密にコピーした
-        # だけで、独立した熱ゆらぎを持つ別配置ではない。
+        # 箱をreplicate^3倍にタイル化する(test50/51/52と同じ手法)。注意(重要な限界):
+        # 複製された像は元の配置を厳密にコピーしただけで、独立した熱ゆらぎを持つ別配置
+        # ではない。cutoff拡大の効果を見るための近似的な手段であり、本物の大箱MDの
+        # 代用にはならない。
         n = replicate
         shifts = np.array([(i, j, k) for i in range(n) for j in range(n) for k in range(n)],
                            dtype=np.float32)  # (n^3, 3)
         old_cell_length = lengths[:, 0].astype(np.float32)  # (frames,)
-        tiled = frames[:, None, :, :] + shifts[None, :, None, :] * old_cell_length[:, None, None, None]
-        frames = np.ascontiguousarray(tiled.reshape(len(frames), -1, 3)).astype(np.float32)
+        tiled = si_positions[:, None, :, :] + shifts[None, :, None, :] * old_cell_length[:, None, None, None]
+        si_positions = np.ascontiguousarray(tiled.reshape(len(frames), -1, 3)).astype(np.float32)
         lengths = lengths * n
 
-    n_sites = frames.shape[1]
+    n_sites = si_positions.shape[1]
     cells = np.zeros((len(frames), 3, 3), dtype=np.float64)
     for axis in range(3):
         cells[:, axis, axis] = lengths[:, 0].astype(np.float64)
 
     output = new_output(args.output)
-    np.save(output / "positions.npy", np.ascontiguousarray(frames).astype(np.float32))
+    np.save(output / "positions.npy", si_positions)
     np.save(output / "cells.npy", cells)
-    species = [{"name": "SiO4", "atomic_number": 14, "mass_amu": float(mass_si + 4 * mass_o)}]
+    species = [{"name": "Si", "atomic_number": 14, "mass_amu": 28.0855}]
     type_ids = [0] * n_sites
 
     source_meta_path = args.reference_frames.with_name(
@@ -772,14 +704,10 @@ def prepare(args):
     meta = dict(
         format=DATASET_FORMAT, length_unit="angstrom", frames=len(frames), species=species,
         type_ids=type_ids, condition={"temperature_k": args.temperature_k},
-        cg_mapping=("test55 SiO4-tetrahedron centroid: one CG bead per Si, positioned at the "
-                    "mass-weighted centroid of that Si and its 4 nearest O (fixed topology from "
-                    "frame 0). Bridging O atoms contribute fully to both tetrahedra they belong "
-                    "to (not split 50/50) -- a local-environment centroid, not a mass-conserving "
-                    "partition of the system. See test55.py's own module docstring."),
-        si_o4_topology=topology.tolist(),
-        original_atom_count=int(numbers.shape[0]),
-        si_atom_count=int(len(si_indices)), o_atom_count=int(len(o_indices)),
+        cg_mapping=("test55 Si-only: one CG site per original Si atom (index-preserving "
+                    "subset), every O atom of every SiO4 tetrahedron dropped outright "
+                    "(not averaged/merged)"),
+        original_atom_count=int(numbers.shape[0]), si_atom_count=int(len(si_indices)),
         replicate=replicate, replicated_site_count=n_sites,
         replicate_caveat=(None if replicate == 1 else
             f"positions are tiled {replicate}x{replicate}x{replicate} ({replicate**3} exact "
@@ -792,8 +720,9 @@ def prepare(args):
         sha256={name: digest(output / name) for name in ("positions.npy", "cells.npy")},
     )
     save_json(output / "metadata.json", meta)
-    print(f"Prepared {len(frames)} frames, {n_sites} SiO4-centroid CG beads"
-          f"{f', replicated {replicate}x{replicate}x{replicate}' if replicate > 1 else ''}: {output}")
+    print(f"Prepared {len(frames)} frames, {n_sites} Si CG sites "
+          f"(dropped {numbers.shape[0] - len(si_indices)} O atoms/frame"
+          f"{f', replicated {replicate}x{replicate}x{replicate}' if replicate > 1 else ''}): {output}")
 
 
 def train(args):
@@ -1109,7 +1038,7 @@ def export(args):
     output = new_output(args.output)
     atoms = atoms_from_meta(ck["start_positions_angstrom"], cell, meta)
     atoms.wrap()
-    lines = ["test55 SiO4-centroid CG start (species order in bundle JSON)", "", f"{len(atoms)} atoms",
+    lines = ["test55 Si-only CG start (species order in bundle JSON)", "", f"{len(atoms)} atoms",
              f"{len(meta['species'])} atom types", ""]
     lines += [f"0 {length:.16g} {axis}lo {axis}hi" for length, axis in zip(np.diag(cell), "xyz")]
     lines += ["", "Masses", ""]
@@ -1241,7 +1170,7 @@ def parser():
     root = argparse.ArgumentParser(description=__doc__)
     sub = root.add_subparsers(dest="stage", required=True)
 
-    p = sub.add_parser("prepare", help="SiO2 SiO4-tetrahedron-centroid CG dataset: one bead per Si+its 4 nearest O")
+    p = sub.add_parser("prepare", help="SiO2 Si-only CG dataset: keep one CG site per original Si atom, drop every O")
     p.add_argument("--reference-frames", type=Path, default=ROOT / "simu_data" / "reference_frames.npz",
                    help="npz with 'positions' (frames,atoms,3), 'cell_lengths' (frames,3), "
                         "'numbers' (atoms,) arrays in Angstrom; defaults to the bundled "
@@ -1265,29 +1194,30 @@ def parser():
     p.add_argument("--updates", type=count, default=50000)  # 勾配更新の総回数(元は6000→20000→50000と要望に合わせて引き上げ)
     p.add_argument("--batch-size", type=count, default=16)
     p.add_argument("--learning-rate", type=positive, default=2.e-4)
-    # test38の元のデフォルトは10.0(粘土系の大きな箱用)。このSiO2結晶の素の箱は13.573A
-    # (半箱~6.7865A)しかなく、それを超えるcutoffは周期像重複バグ(test33/48)を踏むため、
-    # 以前は安全な範囲内で6.5/6.7にとどめていた。今回cutoff=8の要望に対応するため、
-    # `prepare --replicate 2`で箱を2x2x2タイル化する前提に変更: 箱が27.146A(半箱13.573A)
-    # になるので、cutoff=8/large-cutoff=8.2は余裕を持って安全(半箱まで5.57A以上の余裕)。
-    # train()側にもガードを追加済みで、--replicateしていない小さい箱のデータセットに
-    # このデフォルトをうっかり使うと、黙って壊れる代わりに明示的なエラーで弾かれる。
-    p.add_argument("--cutoff", type=positive, default=8.0)  # モデルが実際に使うグラフcutoff(--replicate 2の箱が前提)
-    p.add_argument("--large-cutoff", type=positive, default=8.2)  # ノイズを加える前に候補として作っておくcutoff(cutoff以上必須)
+    # 要望により、素の1x1x1箱(--replicate 1、13.573A、半箱6.7865A)前提でcutoff=5.0/5.0に
+    # 戻してある(test47/48/49の元の値そのもの、マージンなし -- test50の後の6.5/6.7や
+    # 8.0/8.2ではない)。l_maxを6まで上げる(下記)ことで1エッジあたりの計算コストが
+    # 既に大きく増えているので、箱・cutoffの両方を小さく保ってそれを相殺する狙い。
+    p.add_argument("--cutoff", type=positive, default=5.0)  # モデルが実際に使うグラフcutoff(素の1x1x1箱が前提)
+    p.add_argument("--large-cutoff", type=positive, default=5.0)  # ノイズを加える前に候補として作っておくcutoff(cutoff以上必須)
     p.add_argument("--sigma-min", type=positive, default=0.001)
     # 元は0.75(test38/DM2共通のデフォルト)。ノイズ最大値を増やす要望に合わせて2倍の1.5に。
     # (Si-Si最近接距離が~2.97Aなので、sigma=1.5は既に「原子がほぼ完全にかき乱された」
     # 領域までσレンジを広げることになる。)
     p.add_argument("--sigma-max", type=positive, default=1.5)  # 学習時に使うノイズ幅の上限(生成時のt正規化にも使われる)
     # test50独自の追加(test38にはこの2つのCLI引数はなく、architecture()内にl<=1隠れ層/
-    # l<=2エッジでハードコードされている)。要望により、l=4まで広げた構成
-    # (test47/48のl<=5構成を1段階切り詰めたもの)をデフォルトに変更 -- 追加のフラグなしで
-    # l=4になる。l_maxを上げるほどe3nnのテンソル積のパス数・中間テンソルが急増しGPU
-    # メモリを多く使う(test49のCUDA OOMと同じ理由)ので、OOMが出たら--batch-sizeを
-    # 下げること(元のtest38相当のl<=1/l<=2に戻したい場合は明示的に
+    # l<=2エッジでハードコードされている)。要望により、l=6まで広げた構成(test47/48の
+    # l<=5構成をさらに1段階延長したもの -- このプロジェクトでこれまで試した中で最大の
+    # l_max)をデフォルトに変更 -- 追加のフラグなしでl=6になる。l_maxを上げるほどe3nnの
+    # テンソル積のパス数・中間テンソルが急増しGPUメモリを多く使う(l<=5は既にtest49で
+    # CUDA OOMの原因になった)ので、今回は代わりにcutoff/replicateを小さく抑えて相殺して
+    # いる(上の--cutoff/--large-cutoffのコメント参照)。それでもOOMが出たら--batch-size
+    # を下げること(元のtest38相当のl<=1/l<=2に戻したい場合は明示的に
     # --irreps-hidden "64x0e + 32x1e" --irreps-edge "4x0e + 4x1e + 2x2e" を渡す)。
-    p.add_argument("--irreps-hidden", type=str, default="64x0e + 32x1e + 16x2e + 8x3e + 4x4e")
-    p.add_argument("--irreps-edge", type=str, default="4x0e + 4x1e + 2x2e + 2x3e + 1x4e")
+    p.add_argument("--irreps-hidden", type=str,
+                   default="64x0e + 32x1e + 16x2e + 8x3e + 4x4e + 2x5e + 1x6e")
+    p.add_argument("--irreps-edge", type=str,
+                   default="4x0e + 4x1e + 2x2e + 2x3e + 1x4e + 1x5e + 1x6e")
     p.add_argument("--validation-fraction", type=positive, default=0.1)
     p.add_argument("--log-every", type=count, default=100)
     p.set_defaults(handler=train)

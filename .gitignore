@@ -2,7 +2,7 @@ __pycache__/
 *.sif
 *.pt
 *.tmp
-/sio2-tetra/
+/sio2-si-only/
 # generation/training/CGMD results copied back from the HPC side (not source, don't commit).
 # Unanchored on purpose: these get copied into ad hoc, differently-named result directories
 # that can't all be listed by name in advance.
